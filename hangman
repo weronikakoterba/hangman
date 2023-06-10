@@ -1,0 +1,651 @@
+#!/bin/bash
+
+# Author           : Weronika Koterba, s193127@student.pg.edu.pl
+# Created On       : 29.05.23
+# Last Modified By : Weronika Koterba, s193127@student.pg.edu.pl
+# Last Modified On : 29.05.23 
+# Version          : 1.0
+#
+# Description      : Hangman is a guessing game for two or more players. Word, phrase or sentence is randomly drawn from the database and player(s) trie(s) to guess it by suggesting letters within a certain number of guesses.
+#                    To play with added file, put it in the same folders as game.
+# Licensed under General Public License
+
+declare -A scores 
+declare -A players
+
+show_help(){
+  echo
+  echo "This is the script's help."
+  echo
+  echo "$0 : starts script"                             
+  echo
+  echo "Options:"
+  echo "  -h  : Display help."
+  echo "  -v  : Display author information."
+  echo
+  echo "Raports about mistakes send to s193127@studetn.pg.edu.pl "
+  echo
+}
+
+show_author_info(){
+  echo 
+  echo "Author: Weronika Koterba, 193127"
+  echo "Version: 1.0"
+  echo "Contact: s193127@studetn.pg.edu.pl"
+  echo
+}
+
+while getopts "hv" opt; do
+  case $opt in
+    h) 
+      show_help
+      exit 0
+      ;;
+    v)
+      show_author_info
+      exit 0
+      ;;
+    \?)
+      exit 1
+      ;;
+  esac
+done
+
+function one_wrong {
+    echo
+    echo "        O             "
+    echo
+    echo
+    echo
+}
+
+function two_wrong {
+    echo
+    echo "         O            "
+    echo "         |            "
+    echo
+    echo
+}
+
+function three_wrong {
+    echo
+    echo "         O            "
+    echo "         |\           "
+    echo
+    echo
+}
+
+function four_wrong {
+    echo
+    echo "         O            "
+    echo "        /|\           "
+    echo
+    echo
+}
+
+function five_wrong {
+    echo
+    echo "         O            "
+    echo "        /|\           "
+    echo "        /             "
+    echo
+}
+
+function six_wrong {
+    orange_bg="\e[48;5;208m"
+    black_fg="\e[38;5;0m"
+    reset="\e[0m"
+    echo
+    echo -e "${black_fg}${orange_bg}         O            ${reset}"
+    echo -e "${black_fg}${orange_bg}        /|\           ${reset}"
+    echo -e "${black_fg}${orange_bg}        / \           ${reset}"
+    echo
+}
+
+function seven_wrong {
+    red_bg="\e[48;5;196m"
+    white_fg="\e[38;5;15m"
+    reset="\e[0m"
+    cols=$(tput cols) #liczba kolumn
+    rows=$(tput lines) #liczba wierszy
+    text_width=18  #szerokość tekstu
+    padding=$(( (cols - text_width) / 2 ))  #obliczanie wcięcia poziomego
+    empty_lines=$(( (rows - 13) / 2 )) #pusty wiersz na początku i na końcu, aby wyśrodkować tekst pionowo
+    for ((i=1; i<=empty_lines; i++)); do
+        echo
+    done
+    horizontal_padding=$(printf "%${padding}s") #wysrodkowanie tekstu poziomo
+    echo -e "${horizontal_padding}${white_fg}${red_bg}         __________   ${reset}"
+    echo -e "${horizontal_padding}${white_fg}${red_bg}         |        |   ${reset}"
+    echo -e "${horizontal_padding}${white_fg}${red_bg}         O        |   ${reset}"
+    echo -e "${horizontal_padding}${white_fg}${red_bg}        /|\       |   ${reset}"
+    echo -e "${horizontal_padding}${white_fg}${red_bg}        / \       |   ${reset}"
+    echo -e "${horizontal_padding}${white_fg}${red_bg}    ______________|___${reset}"
+    echo
+    for ((i=1; i<=empty_lines; i++)); do
+        echo
+    done
+}
+
+function check_internet_connection {
+  ping -c 4 google.com >/dev/null 2>&1 #przekierowywanie ewentualnym bledow do dev/null
+  if [ $? -eq 0 ]; then #połączenie z internetem jest aktywne
+    return 0  
+  else #brak połączenia z internetem
+    zenity --question --title "No internet connection" --text "Would you like to try again?" --ok-label="OK" --cancel-label="Quit"
+    case $? in
+        0) #użytkownik wybrał "OK"
+            check_internet_connection;;
+        1) #użytkownik wybrał "Quit"
+            exit;;
+    esac
+  fi
+}
+
+function page_exists {
+    zenity --question --title "Page $url does not longer exist" --text "Would you like to change category?" --ok-label="OK" --cancel-label="Quit"
+    case $? in
+        0) menu ;;
+        1) exit;;
+    esac
+}
+
+function save_proverbs {
+    check_internet_connection
+    choice=1
+    url="https://www.fluentu.com/blog/english/useful-english-proverbs/#toc_9" 
+    if wget -q --spider "$url"; then #sprawdzanie dostepnosc strony bez pobierania zawartosci
+        proverbs=$(curl -s "$url" | grep -o '<a[^>]*href="[^"]*"[^>]*>[^<]*</a>' | sed 's/<a[^>]*href="[^"]*"[^>]*>//g' | sed 's/<\/a>//g')
+        #grep -o '<a[^>]*href="[^"]*"[^>]*>[^<]*</a>' to wyrażenie ma na celu znalezienie wszystkich wystąpień linków HTML otagowanych znacznikiem <a>.
+        #sed 's/<a[^>]*href="[^"]*"[^>]*>//g' to wyrażenie służy do usunięcia znaczników <a> i atrybutów href z odnalezionych linków. 
+        #sed 's/<\/a>//g' to wyrażenie usuwa znaczniki zamykające </a> z odnalezionych linków. Ponownie używana jest komenda sed w celu zastąpienia dopasowanych fragmentów pustym ciągiem znaków.
+        proverb=()
+        index=0
+        is_first_line=true
+        while IFS= read -r line; do
+            if [[ $line =~ ^[0-9] ]]; then
+                modified_line=$(echo "$line" | sed -E 's/^[0-9]+\s//;s/[0-9]//g;s/\.\s//g')
+                if [[ $is_first_line == true ]]; then
+                    proverb[0]="$modified_line" 
+                    is_first_line=false
+                    continue
+                fi  
+                proverb[index]="$modified_line"
+                index=$((index + 1))
+            fi
+        done <<< "$proverbs"
+    else
+        page_exists
+    fi
+}
+
+function save_titles {
+    check_internet_connection
+    choice=0
+    url="https://www.buzzfeed.com/evelinamedina/must-watch-movies"
+    if wget -q --spider "$url"; then
+        titles=$(curl -s "$url" | grep -o '<i>[^<]*</i>' | sed 's/<i>//g' | sed 's/<\/i>//g')
+        #grep -o '<i>[^<]*</i>' znalezienie wszystkich wystąpień tagów <i>...</i>. Opcja -o w grep oznacza, że zostaną zwrócone tylko dopasowane fragmenty.
+        #sed 's/<i>//g' usuwanie otwierającego znacznika <i> z odnalezionych tagów <i>
+        #sed 's/<\/i>//g' usuwanie zamykającego znacznika </i> z odnalezionych tagów <i>
+        title=()
+        index=0
+        while IFS= read -r line; do
+            if ! [[ $line =~ [0-9] && ${#line} -gt 3 ]]; then  #sprawdzanie, czy linia nie zawiera cyfr i czy linie sa dluzsze niz 3 cyfry
+                title[index]="$line"
+                index=$((index + 1))
+            fi
+        done <<< "$titles"
+    else
+        page_exists
+    fi
+}
+
+function save_capitals {
+    check_internet_connection
+    choice=2
+    url="https://en.wikipedia.org/wiki/List_of_national_capitals"
+    if wget -q --spider "$url"; then
+        capitals=$(curl -s "$url" | grep -o '<a[^>]*href="[^"]*"[^>]*>[^<]*</a>' | sed 's/<a[^>]*href="[^"]*"[^>]*>//g' | sed 's/<\/a>//g' | grep -E '^[[:alpha:][:space:]]+$' | awk 'length <= 13' | grep '^[[:upper:]]')
+        #grep -o '<a[^>]*href="[^"]*"[^>]*>[^<]*</a>' znalezienie wszystkich wystąpień tagów <a> zawierających atrybut href oraz tekst między nimi.
+        #sed 's/<a[^>]*href="[^"]*"[^>]*>//g' usuwanie tagów <a> oraz atrybutu href z odnalezionych tagów <a>. 
+        #sed 's/<\/a>//g' usuwanie znaczników zamykających </a> z odnalezionych tagów <a>. Zastępuje znalezione znaczniki pustym ciągiem znaków.
+        #grep -E '^[[:alpha:][:space:]]+$' dopasowuje linie, które składają się tylko z liter alfabetycznych ([[:alpha:]]) i spacji ([:space:]).
+        capital=()
+        index=0
+        while IFS= read -r line; do
+            capital[index]="$line"
+            index=$((index + 1))
+        done <<< "$capitals"
+    else
+        page_exists
+    fi
+}
+
+
+function display {
+    zenity --info --title "HANGMAN" --text "\nHangman is a guessing game for two or more players. Word, phrase or sentence is randomly drawn from the database and player(s) trie(s) to guess it by suggesting letters within a certain number of guesses. To confim choice player(s) has(ve) to press enter.
+    \n\n\nWeronika Koterba, 193127"
+}
+
+function add_players {
+    valid_number=false
+    while [[ $valid_number == false ]]; do
+        number=$(zenity --forms --title="PLAYERS" \
+        --text="Choose a number of players(max 6 players)." --add-entry="Number" --cancel-label="Quit")
+        case $? in
+            1) exit;;
+        esac
+        if [[ $number =~ ^[0-9]+$ ]]; then #sprawdzenie, czy wprowadzona wartość jest sklada sie wylacznie z cyfr
+            if ((number >= 1 && number <= 6)); then #sprawdzenie, czy wprowadzona wartość mieści się w zakresie od 1 do 10
+                valid_number=true
+            else
+                zenity --info --title "Invalid Number" --text "Please enter a number from 1 to 6."
+            fi
+        else
+            zenity --info --title "Invalid Input" --text "Please enter a valid number."
+        fi
+    done
+
+    for ((i=0;i<$number;i++)); do
+        valid_name=false
+        while [[ $valid_name == false ]]; do
+            name=$(zenity --forms --title="PLAYERS" \
+                --text="Choose names of players" --add-entry="player $((i + 1))" --cancel-label="Quit")
+                case $? in
+        1) exit;;
+        esac
+            if [[ -v players[$name] ]]; then #sprawdzenie czy w players istnieje juz podane name
+                zenity --info --title "Invalid Name" --text "The name '$name' already exists. Please choose a different name."
+            else
+                players[$name]=0 #dodanie nazwy gracza do players
+                scores[$name]=0 
+                valid_name=true
+            fi
+        done
+    done
+    menu
+}
+
+function read_input {
+    valid_input=false
+    while [[ $valid_input == false ]]; do
+        echo -n "Guess a letter: "
+        read -n 1 letter
+        read -s
+         if [[ $letter == "+" ]]; then #wykonaj akcje po naciśnięciu klawisza Shift
+            for key in "${!scores[@]}"; do
+                unset scores["$key"]
+                scores[$key]=0 
+            done
+            clear
+            main
+        elif [[ $letter == "-" ]]; then
+            clear
+            exit
+        fi
+        letter=$(echo "$letter" | tr [A-Z] [a-z]) #zamiana duzych liter na male
+        if [[ ! $letter =~ ^[a-zA-Z]$ ]]; then #sprawdzenie czy wpisana wartosc jest litera
+            zenity --info --title "Invalid input" --text "Please enter a letter."
+            turn=$((turn - 1 ))
+            break
+        elif [[ ! " ${letter_list[*]} " =~ " ${letter} " ]]; then
+            valid_input=true
+            letter_list[$guessed_index]=$letter
+            guessed_index=$((guessed_index + 1))
+        else
+            zenity --info --title "Repeated letter" --text "Letter '$letter' has already been guessed. Please enter a different letter."
+            turn=$((turn - 1 ))
+            break
+        fi
+    done
+}
+
+function count_score {
+    if [[ $valid_input == true ]]; then
+    f=0 #liczba odgadnietych pol
+    for ((i=0;i<$len;i++)); do
+        if [[ $letter == ${pass[$i]} ]]; then
+            guess[$i]=$letter
+            f=$((f + 1)) 
+        fi
+    done
+    if [[ f -eq 0 ]]; then
+        wrong=$((wrong + 1))
+    else
+        if [[ "${#players[@]}" -gt 1 ]]; then
+        scores[$current_player]=$((scores[$current_player] + f)) #zwiększanie wyniku gracza o liczbe odgadnietych pol
+        fi
+    fi
+    fi
+}
+
+function display_scores {
+    echo "Scores:"
+    for player in "${!players[@]}"; do
+        echo "$player: ${scores[$player]}"
+    done
+}
+
+function display_ranking {
+    scores_message="RANKING:\n"
+    sorted_players=($(
+        for player in "${!players[@]}"; do
+            echo "$player ${scores[$player]}"
+        done | sort -k2 -nr | awk '{print $1}' #sortowanie wg wynikow w kolejnosci malejacej,zapisywanie nazwy
+    ))
+    place=1
+    previous_score=""
+    for player in "${sorted_players[@]}"; do
+        current_score="${scores[$player]}"
+        scores_message+="$place) player $player: ${scores[$player]}\n"
+        if [[ "$current_score" != "$previous_score" ]]; then
+            place=$((place+1))
+        fi
+        previous_score="$current_score"
+    done
+    zenity --info --title "Player Scores" --text "$scores_message"
+}
+
+function find_winner {
+    if [[ "${#players[@]}" -gt 1 ]]; then
+        max_score=0
+        winning_player=""
+        for player in "${!players[@]}"; do
+            if [[ ${scores[$player]} -gt $max_score ]]; then
+                max_score=${scores[$player]}
+                winning_player=$player
+            fi
+        done
+        draw=false
+        for player in "${!players[@]}"; do
+            if [[ ${scores[$player]} -eq $max_score && $player != $winning_player ]]; then
+                draw=true
+                break
+            fi
+        done
+        if [[ $draw == true ]]; then
+            zenity --info --title "Game Over" --text "It's a draw! There is no clear winner.\n\n$key"
+        else
+            zenity --info --title "Game Over" --text "Player $winning_player is the winner!\nScore: ${scores[$winning_player]}\n\n$key"
+        fi
+        display_ranking
+    else
+        if [[ end -eq 0 ]]; then
+            zenity --info --title "Game Over" --text "You won.\n\n$key"
+        else
+            zenity --info --title "Game Over" --text "You lost.\n\n$key"
+        fi
+    fi
+    play_again
+}
+
+function menu {
+    selection=$(zenity --list "Play the game" "Choose a topic" "Play the game offline" "Exit" --column="" --text="Choose an option" --title="Game options" --cancel-label="Quit")
+    case $? in
+        1) exit;;
+        esac
+    case "$selection" in
+        "Play the game") 
+            choice=$((RANDOM % 3))
+            if [[ choice -eq 0 ]]; then
+                save_titles
+                array=("${title[@]}")
+            elif [[ choice -eq 1 ]]; then
+                save_proverbs
+                array=("${proverb[@]}")
+            elif [[ choice -eq 2 ]]; then
+                save_capitals
+                array=("${capital[@]}")
+            fi
+            main
+            ;;
+        "Choose a topic")
+            choice
+            ;;
+        "Play the game offline")
+            offline_choice
+            ;;
+        "Exit") 
+            exit
+            ;;
+        *) zenity --info --title="No Selection" --text="No option selected. Please choose an option."
+            menu
+            ;;
+    esac
+    echo
+}
+
+function offline_choice {
+    choose=$(zenity --list "Animals" "Your own file with passwords" --column="" --text="Choose a list" --title="Game options" --cancel-label="Back")
+    case $? in
+     1) menu;;
+    esac
+    case $choose in
+        "Animals")
+            zenity --info --title="Check" --text="Make sure that animal file is in current folder."
+            file="animals"
+            passwords=()
+            if [[ -f $file ]]; then #jesli plik istnieje to sprawdzana jest jego poprawnosc
+                if grep -q -E '[0-9]' "$file" || ! grep -q -E '^[A-Za-z]' "$file" || grep -q -E '^[[:space:]]' "$file" || grep -q -E '^$' "$file" || grep -q -E '^.{0,2}$' "$file"; then
+                    zenity --info --title="Invalid File" --text="This file is invalid now. Make sure that after the changes in the file, there are no numbers or empty lines, and the passwords start with letters and have more than two letters."   
+                else
+                    while IFS= read -r line; do
+                        passwords+=("$line")
+                    done < "$file"
+                    choice=3
+                    array=("${passwords[@]}")
+                    main
+                fi
+            else
+                zenity --question --title "File not found" --text "There is no such file in the current folder. Would you like to play online?" --ok-label="OK" --cancel-label="Quit"
+                case $? in
+                    0) menu;;
+                    1) exit;;
+                esac
+            fi
+            ;;
+       "Your own file with passwords")
+            zenity --question --title="Rules" --text="1.File extension must be txt.\n2.No numbers allowed in file.\n3. Every password starts with new line. \n4.Passwords must be longer than 2 letters." --ok-label="OK" --cancel-label="Quit"
+            file=$(zenity --file-selection --title="Select a File" --file-filter="Text files (txt) | *.txt")
+            if [ -f "$file" ]; then
+            #sprawdzenie zawartości pliku
+                if grep -q -E '[0-9]' "$file" || ! grep -q -E '^[A-Za-z]' "$file" || grep -q -E '^[[:space:]]' "$file" || grep -q -E '^$' "$file" || grep -q -E '^.{0,2}$' "$file"; then
+                    zenity --info --title="Invalid File" --text="The selected file is invalid. Please make sure the file meets the specified rules."
+                    offline_choice
+                else
+                    zenity --info --title="Selected File" --text="$file"
+                    passwords=()
+                    while IFS= read -r line; do
+                        passwords+=("$line")
+                    done < "$file"
+                    array=("${passwords[@]}")
+                    main
+                fi
+            fi
+            ;;
+            *) zenity --info --title="No Selection" --text="No option selected. Please choose a list."
+               offline_choice
+               ;;
+    esac
+}
+
+function display_category {
+    if [[ choice -eq 0 ]]; then
+            echo "Category: MOVIES"
+    elif [[ choice -eq 1 ]]; then
+            echo "Category: PROVERBS"
+    elif [[ choice -eq 2 ]]; then
+            echo "Category: COUNTIRES AND CAPITALS"
+    elif [[ choice -eq 3 ]]; then
+            echo "Category: ANIMALS"
+    fi
+}
+
+function choice {
+    array=()
+    choose=$(zenity --list "Movies" "Proverbs" "Countries and Capitals" --column="" --text="Choose a list" --title="Game options" --cancel-label="Back")
+    case $? in
+        1) #użytkownik wybrał 'Back"
+            menu;;
+    esac
+    case $choose in
+        "Movies") 
+            save_titles
+            array=("${title[@]}")
+            main
+            ;;
+        "Proverbs")
+            save_proverbs
+            array=("${proverb[@]}")
+            main
+            ;;
+        "Countries and Capitals")
+            save_capitals
+            array=("${capital[@]}")
+            main
+            ;;
+        *)  zenity --info --title="No Selection" --text="No option selected. Please choose a list."
+            choice
+            ;;
+    esac
+}
+
+function play_again {
+    clear_associative_arrays
+    clear
+    choice=$(zenity --list "Yes" "No" --column="" --text="Play again?" --title="Play again?" --cancel-label="Quit")
+    case $? in
+        1)exit ;;
+    esac
+
+    case "$choice" in
+        "Yes") add_players;;
+        "No") exit;;
+        *) play_again;;
+    esac
+}
+
+function clear_associative_arrays { #czyszczenie tablic, aby byly puste na nastepne tury
+    for key in "${!scores[@]}"; do
+        unset scores["$key"]
+    done
+
+    for key in "${!players[@]}"; do
+        unset players["$key"]
+    done
+}
+
+function draw_password_lines {
+    for ((i=0;i<$len;i++)); do
+        guess[$i]="_"
+    done
+    pass=()
+    for ((i=0;i<$len;i++)); do
+        pass[$i]=${key:$i:1} #przechodzenie przez ciag key i zapisywanie pojedynczych znakow do move
+    done
+    for ((j=0;j<$len;j++)); do
+        if [[ ${pass[$j]} == " " ]]; then
+            guess[$j]=" "
+        fi
+    done
+}
+
+function main {
+    guess=()
+    letter_list=()
+    guessed_index=0
+    score=0
+    turn=0
+    wrong=0
+
+    len=${#array[@]} #liczba haseł w tablicy
+    rand_number=$((RANDOM % len)) #wylosuj indeks hasła z tablicy
+    key=${array[$rand_number]}
+
+    key=$(echo "$key" | tr -dc '[:alnum:] \n\r' | tr '[:upper:]' '[:lower:]') #oczyszczenie z niepożądanych znaków i zamiana na male litery małych liter
+    len=${#key}
+    echo $key
+    #echo $len
+
+    draw_password_lines
+
+    while [[ $wrong -lt 7 ]]; do
+        end=0
+        echo "+ - new word from this category"
+        echo "- - exit"
+        current_player_index=$((turn % ${#players[@]}))
+        player_names=("${!players[@]}")
+        current_player="${player_names[$current_player_index]}"
+        display_category
+        echo "Current player: $current_player"
+
+        if [[ "${#players[@]}" -gt 1 ]]; then
+            display_scores
+        fi
+
+        case $wrong in #wyswietlanie wisielca
+            0) echo " " ;;
+            1) one_wrong ;;
+            2) two_wrong ;;
+            3) three_wrong ;;
+            4) four_wrong ;;
+            5) five_wrong ;;
+            6) six_wrong ;;
+        esac
+
+        if [[ wrong -eq 0 ]]; then
+            for i in {1..5}; do
+                echo
+            done
+        fi
+
+        for ((j=0;j<$len;j++)); do #sprawdzanie czy gra jeszcze trwa
+            if [[ ${guess[$j]} == "_" ]]; then
+                end=1
+            fi
+        done
+
+        echo "Guess List: ${letter_list[@]}"
+        echo "Wrong guesses: $wrong"
+        for ((k=0;k<$len;k++)); do
+            echo -n "${guess[$k]} "
+        done
+        echo
+        echo
+
+        if [[ end -eq 1 ]]; then
+            read_input
+            count_score
+        fi
+
+       if [[ end -eq 0 ]]; then #koniec gry, gdy haslo zostalo odgadniete
+            find_winner
+        fi
+
+         if [[ end -eq 1 ]]; then
+            case $wrong in
+                1) one_wrong ;;
+                2) two_wrong ;;
+                3) three_wrong ;;
+                4) four_wrong ;;
+                5) five_wrong ;;
+                6) six_wrong ;;
+                7) seven_wrong ;;
+            esac
+        fi
+
+        turn=$((turn + 1))
+        clear
+    done
+    seven_wrong
+    find_winner
+}
+
+function start_game {
+        clear_associative_arrays
+        clear
+        display  
+        add_players
+}
+start_game
